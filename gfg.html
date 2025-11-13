@@ -1,0 +1,142 @@
+<!doctype html>
+<html lang="ar">
+<head>
+<meta charset="utf-8">
+<title>WebRTC Screen Share - Simple (manual signaling)</title>
+<style>body{font-family:tajawal,Arial;margin:18px} textarea{width:100%;height:120px}</style>
+</head>
+<body>
+<h2>WebRTC Screen Share (يدوي)</h2>
+
+<div id="senderControls">
+  <button id="startCapture">ابدأ التقاط الشاشة / كاميرا</button>
+  <button id="createOffer">أنشئ العرض (Create Offer)</button>
+  <p>Offer SDP (انسخه وأرسله إلى الطرف الآخر)</p>
+  <textarea id="offer" placeholder="Offer SDP يظهر هنا"></textarea>
+  <p>Answer SDP (ألصق هنا جواب الطرف الآخر ثم اضغط Set Answer)</p>
+  <textarea id="answer" placeholder="ألصق هنا answer"></textarea>
+  <button id="setAnswer">Set Answer</button>
+</div>
+
+<hr>
+
+<div id="receiverControls">
+  <p>ألصق هنا Offer من المرسل ثم اضغط Set Remote Offer & Create Answer</p>
+  <textarea id="remoteOffer" placeholder="ألصق Offer هنا"></textarea>
+  <button id="createAnswerBtn">Set Remote Offer & Create Answer</button>
+  <p>Answer (انسخه وأرسله للمرسل)</p>
+  <textarea id="localAnswer"></textarea>
+</div>
+
+<hr>
+<h3>Preview (Receiver side will show incoming stream)</h3>
+<video id="remoteVideo" autoplay playsinline controls style="width:100%;max-height:60vh;background:#000"></video>
+
+<script>
+const startCaptureBtn = document.getElementById('startCapture');
+const createOfferBtn = document.getElementById('createOffer');
+const offerTA = document.getElementById('offer');
+const answerTA = document.getElementById('answer');
+const setAnswerBtn = document.getElementById('setAnswer');
+
+const remoteOfferTA = document.getElementById('remoteOffer');
+const createAnswerBtn = document.getElementById('createAnswerBtn');
+const localAnswerTA = document.getElementById('localAnswer');
+const remoteVideo = document.getElementById('remoteVideo');
+
+let localStream = null;
+let pcSender = null;
+let pcReceiver = null;
+
+const servers = { iceServers: [{ urls: 'stun:stun.l.google.com:19302' }] };
+
+// ---------- Sender (الذي يشارك الشاشة) ----------
+startCaptureBtn.onclick = async () => {
+  try {
+    // حاول أخذ الشاشة أولاً، إن لم يتوفر نطلب الكاميرا
+    try {
+      localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
+    } catch (e) {
+      // فallback: الكاميرا
+      localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    }
+    alert('تم الحصول على Stream محلي. الآن أنشئ العرض (Create Offer).');
+  } catch (err) {
+    alert('فشل في التقاط الشاشة/الكاميرا: ' + err.message);
+    console.error(err);
+  }
+};
+
+createOfferBtn.onclick = async () => {
+  if (!localStream) { alert('التقط الشاشة أولاً'); return; }
+  pcSender = new RTCPeerConnection(servers);
+  // إضافة المسارات
+  localStream.getTracks().forEach(t => pcSender.addTrack(t, localStream));
+  pcSender.onicecandidate = e => {
+    // ننتظر اكتمال تجمع الـICE ثم نعرض sdp
+  };
+
+  const offer = await pcSender.createOffer();
+  await pcSender.setLocalDescription(offer);
+
+  // ننتظر اكتمال جمع ice candidates
+  await waitForIceGatheringComplete(pcSender);
+  offerTA.value = JSON.stringify(pcSender.localDescription);
+};
+
+setAnswerBtn.onclick = async () => {
+  if (!pcSender) { alert('أنشئ العرض أولاً'); return; }
+  try {
+    const ans = JSON.parse(answerTA.value);
+    await pcSender.setRemoteDescription(ans);
+    alert('Answer تم تعيينه.');
+  } catch (e) {
+    alert('خطأ في تعيين answer: ' + e.message);
+    console.error(e);
+  }
+};
+
+// ---------- Receiver (الذي يعرض الفيديو) ----------
+createAnswerBtn.onclick = async () => {
+  const rawOffer = remoteOfferTA.value;
+  if (!rawOffer) { alert('ألصق الOffer أولاً'); return; }
+  const offer = JSON.parse(rawOffer);
+
+  pcReceiver = new RTCPeerConnection(servers);
+  pcReceiver.ontrack = (evt) => {
+    // عرض البث الوارد
+    remoteVideo.srcObject = evt.streams[0];
+  };
+  pcReceiver.onicecandidate = e => {
+    // ننتظر اكتمال الجمع ثم نعرض answer
+  };
+
+  await pcReceiver.setRemoteDescription(offer);
+  const answer = await pcReceiver.createAnswer();
+  await pcReceiver.setLocalDescription(answer);
+
+  // ننتظر اكتمال جمع ice candidates
+  await waitForIceGatheringComplete(pcReceiver);
+  localAnswerTA.value = JSON.stringify(pcReceiver.localDescription);
+  alert('تم إنشاء Answer — انسخه وأرسله للمرسل.');
+};
+
+// ---------- Utility: انتظار اكتمال جمع ICE ----------
+function waitForIceGatheringComplete(pc) {
+  return new Promise(resolve => {
+    if (pc.iceGatheringState === 'complete') {
+      resolve();
+    } else {
+      function check() {
+        if (pc.iceGatheringState === 'complete') {
+          pc.removeEventListener('icegatheringstatechange', check);
+          resolve();
+        }
+      }
+      pc.addEventListener('icegatheringstatechange', check);
+    }
+  });
+}
+</script>
+</body>
+</html>
